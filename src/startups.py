@@ -88,3 +88,11 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+# run_startups_test.py
+import asyncio
+from startups import main
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
