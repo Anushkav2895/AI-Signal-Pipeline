@@ -17,7 +17,7 @@ from src.schemas import ResearchPaperContent, ResearchPaperEntity, Source
 from src.utils.http_client import AsyncHttpClient, HttpError
 
 HF_DAILY_PAPERS_API = "https://huggingface.co/api/daily_papers"
-CONFIRMED_DATA_FLOOR = date(2026, 8, 17)
+CONFIRMED_DATA_FLOOR = date(2026, 6, 14)
 
 
 def _entity_from_hf_record(record: dict) -> ResearchPaperEntity:
