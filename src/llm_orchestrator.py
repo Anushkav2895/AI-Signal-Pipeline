@@ -15,7 +15,7 @@ MAX_CHARS_PER_CHUNK = 12000
 MAX_RETRIES_PER_TIER = 3
 BASE_BACKOFF_SECONDS = 1.5
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
@@ -108,7 +108,7 @@ async def _call_groq(session: aiohttp.ClientSession, prompt: str, text_chunk: st
     api_key = os.environ["GROQ_API_KEY"]
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
-        "model": "llama3-70b-8192",
+                "model": "openai/gpt-oss-120b",
         "messages": [
             {"role": "system", "content": prompt},
             {"role": "user", "content": text_chunk},
