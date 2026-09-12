@@ -1,93 +1,94 @@
-# AI Signal Intelligence Pipeline
+# AI-Signal-Pipeline
 
-A scalable, fault-tolerant, async data ingestion pipeline for the AI/venture
-ecosystem — built for the GraphOne / FrontierAtlas Intelligence Graph.
+A data ingestion pipeline for an AI/venture ecosystem intelligence graph — scrapes startups, products, research papers, news, and jobs; runs extracted content through a multi-tier LLM fallback chain; resolves entities to canonical names; and writes everything to Google Sheets.
 
-It ingests, normalizes, and enriches data on **startups**, **products**,
-**research papers** (with live GitHub star tracking), **AI news**, and
-**AI job listings**, then resolves messy entity names to canonical forms
-and writes everything to Google Sheets (and/or a local database).
+Built as a 3-day trial task. See `architecture.pdf` for the full production-scale design discussion (Scale Strategy, 413/429 handling, Freshness Tracking, Storage Strategy).
 
-## Architecture Overview
-                     ┌─────────────────────┐
-                     │     Orchestrator     │  (src/main.py)
-                     └──────────┬───────────┘
-          ┌───────────────────┼───────────────────┐
-          ▼                    ▼                    ▼
- ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐
- │ Phase I Scraper │  │ Phase II Crawler │  │  Phase III LLM    │
- │ (bulk, one-time)│  │ (news/jobs, 24h) │  │  Extraction Engine│
- │ startups/       │  │ freshness-gated  │  │  Gemini→Groq→     │
- │ products/papers │  └────────┬─────────┘  │  DeepSeek fallback│
- └────────┬────────┘           │            └─────────┬─────────┘
-          │                    │                       │
-          └────────────────────┴───────────────────────┘
-                                ▼
-                 ┌──────────────────────────┐
-                 │ Phase IV Entity Resolver  │
-                 │ (raw name → canonical)    │
-                 └────────────┬──────────────┘
-                              ▼
-                 ┌──────────────────────────┐
-                 │   Storage (SQLite/Postgres│
-                 
-Each stage is independently async and queue-driven, so scraping, LLM
-extraction, and entity resolution all run concurrently rather than as
-sequential batch steps — this is what lets the architecture scale from a
-few hundred records in a local run to 500k+ across distributed workers
-without code changes (see `architecture.pdf` for the full scale plan,
-413/429 handling strategy, freshness/dedup strategy, and storage
-justification).
+## What's Implemented
+
+| Component | Source | Status |
+|---|---|---|
+| Startups | Y Combinator public companies feed | 1,000 AI-tagged records |
+| Products | Product Hunt GraphQL API | 1,000 records |
+| Research Papers | HuggingFace Daily Papers (+ GitHub star correlation) | 1,000 records |
+| News | RSS feeds across 5 AI news sources | 24h-freshness filtered |
+| Jobs | RemoteOK API + WeWorkRemotely RSS | 24h-freshness filtered |
+| Entity Resolution | rapidfuzz against a 50-company canonical seed list | Full mapping log |
+| LLM Extraction | Gemini Flash → Groq (OSS 120B) → DeepSeek fallback chain | Proven working end-to-end |
+| Output | Google Sheets (service account, 6 tabs) | Live |
 
 ## Project Structure
+src/
+├── scrapers/
+│ ├── startups.py # YC companies feed
+│ ├── products.py # Product Hunt API
+│ └── papers.py # HuggingFace Daily Papers + GitHub stars
+├── news.py # RSS-based news crawler, 24h freshness
+├── jobs.py # RemoteOK + WeWorkRemotely, 24h freshness
+├── llm_orchestrator.py # 3-tier LLM fallback + chunking + backoff
+├── entity_resolution.py # rapidfuzz canonicalization
+├── sheets_writer.py # Writes entity records to Google Sheets
+├── schemas.py # Shared pydantic schemas
+├── config.py # Environment/config loading
+└── utils/ # Shared HTTP client helpers
+
+run_*.py # Individual test runners for each component (project root)
+architecture.pdf # Production-scale architecture writeup
 
 ## Setup
 
-1. Clone the repo and create a virtual environment:
-```bash
-   git clone <this-repo-url>
-   cd ai-signal-pipeline
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
-   playwright install chromium
+### 1. Clone and create a virtual environment
+
+```powershell
+git clone <repo-url>
+cd AI-Signal-Pipeline
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-2. Copy `.env.example` to `.env` and fill in your API keys:
-```bash
-   cp .env.example .env
+### 2. Configure environment variables
+
+Copy `.env.example` to `.env` and fill in:PH_DEVELOPER_TOKEN= # Product Hunt developer token (api.producthunt.com/v2/oauth/applications)
+GEMINI_API_KEY= # aistudio.google.com/apikey
+GROQ_API_KEY= # console.groq.com/keys
+DEEPSEEK_API_KEY= # platform.deepseek.com/api_keys (requires small prepaid balance)
+
+### 3. Set up the Google Sheets service account
+
+1. Create a Google Cloud project, enable the **Sheets API** and **Drive API**
+2. Create a Service Account, generate a JSON key, save it as `service_account.json` in the project root (already gitignored)
+3. Create a Google Sheet, share it with the service account's email (`...@<project>.iam.gserviceaccount.com`) as **Editor**
+4. Copy the Sheet ID from its URL into `.env`
+
+### 4. Run individual components
+
+```powershell
+python run_startups_test.py       # scrape + print startups
+python run_products_test.py       # scrape + print products
+python run_papers_test.py         # scrape + print papers
+python run_llm_test.py            # test the LLM fallback chain
+python run_entity_test.py         # run entity resolution + write mapping log
+python run_sheets_test.py         # write startups to Google Sheets
+python run_sheets_products.py     # write products to Google Sheets
+python run_sheets_papers.py       # write papers to Google Sheets
+python run_sheets_news.py         # crawl news + write to Google Sheets
+python run_sheets_jobs.py         # crawl jobs + write to Google Sheets
 ```
-   You'll need at minimum a Gemini API key for the LLM extraction layer;
-   Groq and DeepSeek keys enable the fallback chain (Phase III).
 
-3. For Google Sheets export, place a Google service-account
-   `credentials.json` in the project root (path configurable via
-   `GOOGLE_SHEETS_CREDENTIALS_PATH`) and share your target sheet with the
-   service account's email. Set `GOOGLE_SHEET_ID` in `.env`.
+## Known Limitations & Notes
 
-4. Run the pipeline:
-```bash
-   python -m src.main --phase all
-```
-   Or run a single phase, e.g.:
-```bash
-   python -m src.main --phase startups
-   python -m src.main --phase news
-```
+- **Product pricing model**: Product Hunt's API doesn't expose pricing data directly. `products.py` applies a documented heuristic (topic-tag signals for FREE/open-source, defaulting to FREEMIUM) rather than guessing per-product — see the comment in `_infer_pricing_model()`.
+- **Jobs freshness**: job boards post far less frequently than news sources, so a single point-in-time run can legitimately return 0 results if nothing was posted in the last 24 hours. Re-running closer to a high-activity window (or on a recurring schedule in production, per `architecture.pdf`) resolves this.
+- **DeepSeek tier**: implemented and wired into the fallback chain, but requires a funded account to test live (free tier returns 402). Gemini and Groq are both confirmed working.
+- **Entity resolution seed list**: uses a representative 50-company canonical list per the brief's "mock a small database" allowance, not an exhaustive database.
 
-5. Run tests:
-```bash
-   pytest
-```
+## Architecture
 
-## Evaluation Notes
-
-- Every record traces back to a real, valid `source.url` — nothing here
-  is LLM-hallucinated filler data.
-- The entity resolver ships with a mock seed list of ~50 known AI
-  startups (`src/entity_resolution/seed_entities.py`) for canonicalization
-  matching, per the brief.
-- See `architecture.pdf` for the written answers to the Phase VI
-  scale/413/429/freshness/storage questions.
-                 │   staging) + Google Sheets│
-                 │   export (6 tabs)         │
-                 └──────────────────────────┘
+See `architecture.pdf` for the full writeup covering:
+1. Scale strategy for 500,000+ records without code changes
+2. 413/429 handling across concurrent LLM extractions
+3. Freshness tracking across distributed crawler nodes
+4. Storage strategy (PostgreSQL + Neo4j + vector store) at production scale
+GOOGLE_SHEET_ID= # the ID from your target Sheet's URL
+GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
