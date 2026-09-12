@@ -16,6 +16,7 @@ AI_KEYWORDS_PATTERN = re.compile(
 )
 
 REMOTEOK_API = "https://remoteok.com/api"
+ARBEITNOW_API = "https://www.arbeitnow.com/api/job-board-api"
 
 WWR_FEEDS = [
     ("We Work Remotely - Programming", "https://weworkremotely.com/categories/remote-programming-jobs.rss"),
@@ -60,6 +61,52 @@ def _infer_role_family(title: str) -> str:
     if any(k in lowered for k in ("data engineer", "analytics")):
         return "Data Engineering"
     return "Other"
+
+
+async def _fetch_arbeitnow(session: aiohttp.ClientSession) -> list[JobEntity]:
+    entities = []
+    try:
+        async with session.get(ARBEITNOW_API, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            data = await resp.json()
+    except Exception as e:
+        print(f"[jobs] failed to fetch Arbeitnow: {e}")
+        return entities
+
+    now = datetime.now(timezone.utc)
+
+    for item in data.get("data", []):
+        title = item.get("title", "")
+        description = item.get("description", "")
+        tags = " ".join(item.get("tags", []))
+        combined = f"{title} {description} {tags}"
+        if not _is_ai_related(combined):
+            continue
+
+        created_ts = item.get("created_at")
+        if not created_ts:
+            continue
+        try:
+            pub_date = datetime.fromtimestamp(created_ts, tz=timezone.utc)
+        except (ValueError, OSError, TypeError):
+            continue
+
+        if now - pub_date > FRESHNESS_WINDOW:
+            continue
+
+        entities.append(
+            JobEntity(
+                source=SourceInfo(name="Arbeitnow", url=item.get("url", "https://www.arbeitnow.com")),
+                content=JobContent(
+                    company=item.get("company_name", "").strip(),
+                    date=pub_date.isoformat(),
+                    is_remote=item.get("remote", False),
+                    role_family=_infer_role_family(title),
+                ),
+                collectedAt=now.isoformat(),
+            )
+        )
+
+    return entities
 
 
 async def _fetch_remoteok(session: aiohttp.ClientSession) -> list[JobEntity]:
@@ -163,7 +210,7 @@ async def _fetch_wwr_feed(session: aiohttp.ClientSession, source_name: str, feed
 
 
 async def fetch_jobs(session: aiohttp.ClientSession) -> list[JobEntity]:
-    tasks = [_fetch_remoteok(session)]
+    tasks = [_fetch_remoteok(session), _fetch_arbeitnow(session)]
     tasks += [_fetch_wwr_feed(session, name, url) for name, url in WWR_FEEDS]
     results = await asyncio.gather(*tasks)
     all_entities = [entity for batch in results for entity in batch]
