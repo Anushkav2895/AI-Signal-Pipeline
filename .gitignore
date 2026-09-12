@@ -9,3 +9,11 @@ venv/
 *.log
 .pytest_cache/
 .DS_Store
+
+service_account.json
+
+service_account.json
+
+service_account.json
+
+service_account.json
